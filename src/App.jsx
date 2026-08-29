@@ -141,7 +141,7 @@ function taskId(listType, category, task) {
 // ---------- app ----------
 
 export default function App() {
-  const [data, setData] = useState(() => loadState() || defaultState());
+  const [data, setData] = useState(() => ({ ...defaultState(), ...(loadState() || {}) }));
   const [tab, setTab] = useState('today');
   const [opsSubTab, setOpsSubTab] = useState('opening');
 
