@@ -86,6 +86,21 @@ const STOCK_CATEGORIES = ['Coffee', 'Milk', 'Alternative milk', 'Food', 'Bakery'
 const STOCK_UNITS = ['kg', 'g', 'L', 'ml', 'case', 'carton', 'bag', 'unit', 'sleeve', 'box'];
 const WASTE_REASONS = ['Expired', 'Damaged', 'Overproduction', 'Quality', 'Staff error', 'Customer return', 'Spillage', 'Other'];
 
+const DEFAULT_RECIPES = [
+  {
+    id: 'flat-white',
+    name: 'Flat White',
+    cupSize: '8oz',
+    sellingPrice: 4.1,
+    ingredients: [
+      { id: uid(), name: 'Coffee', packSize: 1000, packUnit: 'g', packCost: 21, qtyUsed: 18.5, qtyUnit: 'g' },
+      { id: uid(), name: 'Milk', packSize: 2000, packUnit: 'ml', packCost: 2.9, qtyUsed: 150, qtyUnit: 'ml' },
+      { id: uid(), name: 'Cup', packSize: 1, packUnit: 'unit', packCost: 0.12, qtyUsed: 1, qtyUnit: 'unit' },
+      { id: uid(), name: 'Lid', packSize: 1, packUnit: 'unit', packCost: 0.06, qtyUsed: 1, qtyUnit: 'unit' },
+    ],
+  },
+];
+
 const DEFAULT_PRODUCTS = [
   { id: 'oat-milk', name: 'Oat milk', category: 'Alternative milk', supplier: 'Musgrave', unit: 'case', par: 12, current: 4.5, cost: 22.5 },
   { id: 'whole-milk', name: 'Whole milk', category: 'Milk', supplier: 'Musgrave', unit: 'case', par: 8, current: 6, cost: 14 },
@@ -104,6 +119,8 @@ function defaultState() {
     products: DEFAULT_PRODUCTS,
     waste: [],
     orders: [],
+    recipes: DEFAULT_RECIPES,
+    dailyCloses: [],
   };
 }
 
@@ -229,6 +246,26 @@ export default function App() {
     setData((d) => ({ ...d, orders: [entry, ...d.orders] }));
   }
 
+  // ---------- money ----------
+
+  function addRecipe(recipe) {
+    const entry = { id: uid(), ingredients: [], sellingPrice: 0, ...recipe };
+    setData((d) => ({ ...d, recipes: [...d.recipes, entry] }));
+  }
+
+  function updateRecipe(id, patch) {
+    setData((d) => ({ ...d, recipes: d.recipes.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+  }
+
+  function removeRecipe(id) {
+    setData((d) => ({ ...d, recipes: d.recipes.filter((r) => r.id !== id) }));
+  }
+
+  function saveDailyClose(close) {
+    const entry = { id: uid(), date: dateKey, timestamp: Date.now(), ...close };
+    setData((d) => ({ ...d, dailyCloses: [entry, ...d.dailyCloses.filter((c) => c.date !== dateKey)] }));
+  }
+
   const latestReadings = useMemo(() => {
     const map = {};
     for (const r of data.haccpReadings) {
@@ -260,7 +297,15 @@ export default function App() {
   }
   lowStockProducts.forEach((p) => attentionItems.push(`${p.name} below par`));
 
+  const yesterdayKey = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  })();
+  const yesterdayClose = data.dailyCloses.find((c) => c.date === yesterdayKey);
+
   const [stockSubTab, setStockSubTab] = useState('live');
+  const [moneySubTab, setMoneySubTab] = useState('close');
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', paddingBottom: 60 }}>
@@ -278,6 +323,7 @@ export default function App() {
             coffee={data.coffees[0]}
             latestDialIn={latestDialIn}
             lowStockProducts={lowStockProducts}
+            yesterdayClose={yesterdayClose}
             goToOps={(subtab) => {
               setTab('operations');
               setOpsSubTab(subtab);
@@ -320,6 +366,23 @@ export default function App() {
             markOrdered={markOrdered}
           />
         )}
+
+        {tab === 'money' && (
+          <MoneyScreen
+            subTab={moneySubTab}
+            setSubTab={setMoneySubTab}
+            recipes={data.recipes}
+            addRecipe={addRecipe}
+            updateRecipe={updateRecipe}
+            removeRecipe={removeRecipe}
+            dailyCloses={data.dailyCloses}
+            saveDailyClose={saveDailyClose}
+            todaysWasteCost={data.waste
+              .filter((w) => new Date(w.timestamp).toISOString().slice(0, 10) === dateKey)
+              .reduce((sum, w) => sum + (w.cost || 0), 0)}
+            dateKey={dateKey}
+          />
+        )}
       </div>
     </div>
   );
@@ -353,6 +416,7 @@ function TabNav({ tab, setTab }) {
     { id: 'today', label: 'Today' },
     { id: 'operations', label: 'Operations' },
     { id: 'stock', label: 'Stock' },
+    { id: 'money', label: 'Money' },
     { id: 'coffee', label: 'Coffee' },
   ];
   return (
@@ -403,7 +467,7 @@ function SectionLabel({ children }) {
 
 // ---------- TODAY ----------
 
-function TodayScreen({ attentionItems, openingProgress, closingProgress, latestReadings, devices, coffee, latestDialIn, lowStockProducts, goToOps, goToCoffee, goToStock }) {
+function TodayScreen({ attentionItems, openingProgress, closingProgress, latestReadings, devices, coffee, latestDialIn, lowStockProducts, yesterdayClose, goToOps, goToCoffee, goToStock }) {
   return (
     <div style={{ paddingTop: 14 }}>
       {attentionItems.length > 0 && (
@@ -516,6 +580,34 @@ function TodayScreen({ attentionItems, openingProgress, closingProgress, latestR
           View stock →
         </button>
       </Card>
+
+      {yesterdayClose && (
+        <Card>
+          <SectionLabel>Yesterday</SectionLabel>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Sales</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 18 }}>€{yesterdayClose.posSales}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Cash variance</div>
+              <div
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 18,
+                  color: Math.abs(yesterdayClose.variance) > 10 ? 'var(--status-red)' : Math.abs(yesterdayClose.variance) > 5 ? 'var(--copper)' : 'var(--status-green)',
+                }}
+              >
+                {yesterdayClose.variance >= 0 ? '+' : ''}€{yesterdayClose.variance}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Waste</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 18 }}>€{yesterdayClose.wasteCost}</div>
+            </div>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -1309,6 +1401,371 @@ function Products({ products, addProduct, updateProduct, removeProduct }) {
           </div>
         </Card>
       ))}
+    </div>
+  );
+}
+
+// ---------- MONEY ----------
+
+function ingredientCost(ing) {
+  if (!ing.packSize) return 0;
+  return Math.round((ing.packCost / ing.packSize) * ing.qtyUsed * 100) / 100;
+}
+
+function recipeCost(recipe) {
+  return Math.round(recipe.ingredients.reduce((sum, ing) => sum + ingredientCost(ing), 0) * 100) / 100;
+}
+
+function MoneyScreen({ subTab, setSubTab, recipes, addRecipe, updateRecipe, removeRecipe, dailyCloses, saveDailyClose, todaysWasteCost, dateKey }) {
+  const subTabs = [
+    { id: 'close', label: 'Daily Close' },
+    { id: 'recipes', label: 'Recipes & COGS' },
+  ];
+  return (
+    <div style={{ paddingTop: 14 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {subTabs.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => setSubTab(s.id)}
+            style={{
+              background: subTab === s.id ? 'var(--bg-elevated)' : 'none',
+              border: '1px solid var(--border)',
+              color: 'var(--text-ivory)',
+              fontSize: 12,
+              padding: '8px 12px',
+              borderRadius: 8,
+            }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === 'close' && (
+        <DailyClose dailyCloses={dailyCloses} saveDailyClose={saveDailyClose} todaysWasteCost={todaysWasteCost} recipes={recipes} dateKey={dateKey} />
+      )}
+      {subTab === 'recipes' && <Recipes recipes={recipes} addRecipe={addRecipe} updateRecipe={updateRecipe} removeRecipe={removeRecipe} />}
+    </div>
+  );
+}
+
+function varianceStatus(v) {
+  const abs = Math.abs(v);
+  if (abs <= 5) return { label: 'Normal', color: 'var(--status-green)' };
+  if (abs <= 10) return { label: 'Review', color: 'var(--copper)' };
+  return { label: 'Manager attention', color: 'var(--status-red)' };
+}
+
+function DailyClose({ dailyCloses, saveDailyClose, todaysWasteCost, recipes, dateKey }) {
+  const existing = dailyCloses.find((c) => c.date === dateKey);
+  const [posSales, setPosSales] = useState(existing?.posSales ?? '');
+  const [openingFloat, setOpeningFloat] = useState(existing?.openingFloat ?? '');
+  const [cashSales, setCashSales] = useState(existing?.cashSales ?? '');
+  const [paidOuts, setPaidOuts] = useState(existing?.paidOuts ?? '');
+  const [refunds, setRefunds] = useState(existing?.refunds ?? '');
+  const [countedCash, setCountedCash] = useState(existing?.countedCash ?? '');
+  const [explanation, setExplanation] = useState(existing?.explanation ?? '');
+  const [saved, setSaved] = useState(false);
+
+  const expectedCash =
+    Math.round(((parseFloat(openingFloat) || 0) + (parseFloat(cashSales) || 0) - (parseFloat(paidOuts) || 0) - (parseFloat(refunds) || 0)) * 100) / 100;
+  const variance = countedCash !== '' ? Math.round((parseFloat(countedCash) - expectedCash) * 100) / 100 : null;
+  const status = variance !== null ? varianceStatus(variance) : null;
+
+  const avgCogsPct = (() => {
+    const withPrice = recipes.filter((r) => r.sellingPrice > 0);
+    if (withPrice.length === 0) return null;
+    const pct = withPrice.reduce((sum, r) => sum + (recipeCost(r) / r.sellingPrice) * 100, 0) / withPrice.length;
+    return Math.round(pct * 10) / 10;
+  })();
+
+  function close() {
+    if (variance !== null && Math.abs(variance) > 10 && !explanation.trim()) {
+      alert('Variance exceeds €10 — add a note explaining it before closing.');
+      return;
+    }
+    saveDailyClose({
+      posSales: parseFloat(posSales) || 0,
+      openingFloat: parseFloat(openingFloat) || 0,
+      cashSales: parseFloat(cashSales) || 0,
+      paidOuts: parseFloat(paidOuts) || 0,
+      refunds: parseFloat(refunds) || 0,
+      expectedCash,
+      countedCash: parseFloat(countedCash) || 0,
+      variance: variance ?? 0,
+      wasteCost: Math.round(todaysWasteCost * 100) / 100,
+      estimatedCogsPct: avgCogsPct,
+      explanation,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1800);
+  }
+
+  const inputStyle = {
+    width: '100%',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-ivory)',
+    borderRadius: 8,
+    padding: '10px 12px',
+    fontSize: 15,
+  };
+
+  return (
+    <div>
+      <Card>
+        <SectionLabel>Today's close</SectionLabel>
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>POS sales (€)</div>
+          <input type="number" step="0.01" value={posSales} onChange={(e) => setPosSales(e.target.value)} style={inputStyle} />
+        </div>
+      </Card>
+
+      <Card>
+        <SectionLabel>Cash reconciliation</SectionLabel>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+          {[
+            ['Opening float', openingFloat, setOpeningFloat],
+            ['Cash sales', cashSales, setCashSales],
+            ['Paid-outs', paidOuts, setPaidOuts],
+            ['Refunds', refunds, setRefunds],
+          ].map(([label, val, set]) => (
+            <div key={label}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{label} (€)</div>
+              <input type="number" step="0.01" value={val} onChange={(e) => set(e.target.value)} style={inputStyle} />
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)', fontSize: 13 }}>
+          <span style={{ color: 'var(--text-secondary)' }}>Expected cash</span>
+          <span>€{expectedCash}</span>
+        </div>
+
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Cash counted (€)</div>
+          <input type="number" step="0.01" value={countedCash} onChange={(e) => setCountedCash(e.target.value)} style={{ ...inputStyle, fontSize: 20 }} />
+        </div>
+
+        {variance !== null && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: '12px 14px',
+              borderRadius: 8,
+              background: 'var(--bg-elevated)',
+              border: `1px solid ${status.color}`,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Variance</span>
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: status.color }}>
+                {variance >= 0 ? '+' : ''}€{variance}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: status.color, marginTop: 2 }}>{status.label}</div>
+          </div>
+        )}
+
+        {variance !== null && Math.abs(variance) > 5 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Explanation (required above €10)</div>
+            <input value={explanation} onChange={(e) => setExplanation(e.target.value)} style={inputStyle} placeholder="What happened?" />
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <SectionLabel>Summary</SectionLabel>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Waste today</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18 }}>€{Math.round(todaysWasteCost * 100) / 100}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Estimated COGS</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18 }}>{avgCogsPct !== null ? `${avgCogsPct}%` : '—'}</div>
+          </div>
+        </div>
+        {avgCogsPct === null && (
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8 }}>
+            Add selling prices to your recipes to see an estimated COGS here.
+          </div>
+        )}
+      </Card>
+
+      <button
+        onClick={close}
+        style={{ ...ghostButtonStyle, background: saved ? 'var(--status-green)' : 'var(--copper)', color: saved ? '#fff' : '#3C2E22', border: 'none', fontWeight: 500, padding: '12px' }}
+      >
+        {saved ? '✓ Closed' : existing ? 'Update close' : 'Close day'}
+      </button>
+
+      {dailyCloses.length > 0 && (
+        <Card style={{ marginTop: 12 }}>
+          <SectionLabel>Recent closes</SectionLabel>
+          {dailyCloses.slice(0, 7).map((c) => {
+            const st = varianceStatus(c.variance);
+            return (
+              <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '6px 0', borderTop: '1px solid var(--border)' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>{c.date}</span>
+                <span>€{c.posSales}</span>
+                <span style={{ color: st.color }}>
+                  {c.variance >= 0 ? '+' : ''}€{c.variance}
+                </span>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function Recipes({ recipes, addRecipe, updateRecipe, removeRecipe }) {
+  const [expandedId, setExpandedId] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ name: '', cupSize: '', sellingPrice: '' });
+
+  function submit() {
+    if (!form.name.trim()) return;
+    addRecipe({ name: form.name, cupSize: form.cupSize, sellingPrice: parseFloat(form.sellingPrice) || 0, ingredients: [] });
+    setForm({ name: '', cupSize: '', sellingPrice: '' });
+    setShowForm(false);
+  }
+
+  const inputStyle = {
+    width: '100%',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-ivory)',
+    borderRadius: 8,
+    padding: '8px 10px',
+    fontSize: 13,
+  };
+
+  return (
+    <div>
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showForm ? 12 : 0 }}>
+          <SectionLabel>Drink recipes</SectionLabel>
+          <button onClick={() => setShowForm((v) => !v)} style={{ ...ghostButtonStyle, width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: 11 }}>
+            {showForm ? 'Cancel' : '+ Add'}
+          </button>
+        </div>
+        {showForm && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input placeholder="Name (e.g. Cappuccino)" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={inputStyle} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <input placeholder="Cup size (e.g. 8oz)" value={form.cupSize} onChange={(e) => setForm((f) => ({ ...f, cupSize: e.target.value }))} style={inputStyle} />
+              <input type="number" step="0.01" placeholder="Selling price (€)" value={form.sellingPrice} onChange={(e) => setForm((f) => ({ ...f, sellingPrice: e.target.value }))} style={inputStyle} />
+            </div>
+            <button onClick={submit} style={{ ...ghostButtonStyle, background: 'var(--copper)', color: '#3C2E22', border: 'none', fontWeight: 500 }}>
+              Add recipe
+            </button>
+          </div>
+        )}
+      </Card>
+
+      {recipes.map((r) => {
+        const cost = recipeCost(r);
+        const margin = Math.round((r.sellingPrice - cost) * 100) / 100;
+        const marginPct = r.sellingPrice > 0 ? Math.round((margin / r.sellingPrice) * 1000) / 10 : null;
+        const isOpen = expandedId === r.id;
+        return (
+          <Card key={r.id}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => setExpandedId(isOpen ? null : r.id)}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 500 }}>{r.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                  {r.cupSize} · cost €{cost} · sells €{r.sellingPrice}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, color: marginPct !== null && marginPct < 60 ? 'var(--copper)' : 'var(--status-green)' }}>
+                  {marginPct !== null ? `${marginPct}%` : '—'}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>margin</div>
+              </div>
+            </div>
+
+            {isOpen && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                {r.ingredients.map((ing, i) => (
+                  <div key={ing.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '5px 0', color: 'var(--text-secondary)' }}>
+                    <span>
+                      {ing.name} — {ing.qtyUsed}
+                      {ing.qtyUnit}
+                    </span>
+                    <span>€{ingredientCost(ing)}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 500, padding: '8px 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
+                  <span>Total cost</span>
+                  <span>€{cost}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Gross margin</span>
+                  <span style={{ color: 'var(--status-green)' }}>€{margin}</span>
+                </div>
+                <AddIngredient recipeId={r.id} updateRecipe={updateRecipe} ingredients={r.ingredients} />
+                <button
+                  onClick={() => removeRecipe(r.id)}
+                  style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, padding: '6px 10px', borderRadius: 8, marginTop: 10 }}
+                >
+                  Remove recipe
+                </button>
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function AddIngredient({ recipeId, updateRecipe, ingredients }) {
+  const [form, setForm] = useState({ name: '', packSize: '', packUnit: 'g', packCost: '', qtyUsed: '', qtyUnit: 'g' });
+  const inputStyle = {
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-ivory)',
+    borderRadius: 6,
+    padding: '6px 8px',
+    fontSize: 12,
+  };
+
+  function add() {
+    if (!form.name.trim() || !form.packSize || !form.qtyUsed) return;
+    const ing = {
+      id: uid(),
+      name: form.name,
+      packSize: parseFloat(form.packSize),
+      packUnit: form.packUnit,
+      packCost: parseFloat(form.packCost) || 0,
+      qtyUsed: parseFloat(form.qtyUsed),
+      qtyUnit: form.qtyUnit,
+    };
+    updateRecipe(recipeId, { ingredients: [...ingredients, ing] });
+    setForm({ name: '', packSize: '', packUnit: 'g', packCost: '', qtyUsed: '', qtyUnit: 'g' });
+  }
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6 }}>Add ingredient</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 6, marginBottom: 6 }}>
+        <input placeholder="Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={inputStyle} />
+        <input type="number" step="0.01" placeholder="Pack cost €" value={form.packCost} onChange={(e) => setForm((f) => ({ ...f, packCost: e.target.value }))} style={inputStyle} />
+        <input type="number" step="0.1" placeholder="Pack size" value={form.packSize} onChange={(e) => setForm((f) => ({ ...f, packSize: e.target.value }))} style={inputStyle} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 8 }}>
+        <input type="number" step="0.1" placeholder="Qty used" value={form.qtyUsed} onChange={(e) => setForm((f) => ({ ...f, qtyUsed: e.target.value }))} style={inputStyle} />
+        <input placeholder="Unit (g/ml/unit)" value={form.qtyUnit} onChange={(e) => setForm((f) => ({ ...f, qtyUnit: e.target.value, packUnit: e.target.value }))} style={inputStyle} />
+        <button onClick={add} style={{ ...inputStyle, background: 'var(--copper)', color: '#3C2E22', fontWeight: 500, border: 'none', cursor: 'pointer' }}>
+          Add
+        </button>
+      </div>
     </div>
   );
 }
