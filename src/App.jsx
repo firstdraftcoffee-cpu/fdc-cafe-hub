@@ -86,6 +86,29 @@ const STOCK_CATEGORIES = ['Coffee', 'Milk', 'Alternative milk', 'Food', 'Bakery'
 const STOCK_UNITS = ['kg', 'g', 'L', 'ml', 'case', 'carton', 'bag', 'unit', 'sleeve', 'box'];
 const WASTE_REASONS = ['Expired', 'Damaged', 'Overproduction', 'Quality', 'Staff error', 'Customer return', 'Spillage', 'Other'];
 
+const STAFF_ROLES = ['Owner', 'Manager', 'Supervisor', 'Barista', 'Kitchen', 'Staff'];
+
+const DEFAULT_SOPS = [
+  {
+    id: 'sop-espresso-open',
+    title: 'Opening the espresso machine',
+    category: 'Coffee',
+    steps: ['Power on and let heat for 20 minutes', 'Flush all group heads', 'Check steam wand pressure', 'Purge portafilters', 'Dial in first shot before service'],
+  },
+  {
+    id: 'sop-milk-steaming',
+    title: 'Milk steaming standard',
+    category: 'Coffee',
+    steps: ['Cold milk only, fresh pitcher', 'Purge wand before and after', 'Texture to fine microfoam, no large bubbles', 'Target 60–65°C, never above 70°C', 'Wipe wand immediately after use'],
+  },
+  {
+    id: 'sop-complaint',
+    title: 'Handling a customer complaint',
+    category: 'Front of house',
+    steps: ['Listen fully before responding', 'Apologise and offer to remake or refund', 'Involve a manager if the customer remains unhappy', 'Log the incident if it involves food safety'],
+  },
+];
+
 const DEFAULT_RECIPES = [
   {
     id: 'flat-white',
@@ -121,6 +144,9 @@ function defaultState() {
     orders: [],
     recipes: DEFAULT_RECIPES,
     dailyCloses: [],
+    handoverNotes: [],
+    sops: DEFAULT_SOPS,
+    staff: [],
   };
 }
 
@@ -266,6 +292,35 @@ export default function App() {
     setData((d) => ({ ...d, dailyCloses: [entry, ...d.dailyCloses.filter((c) => c.date !== dateKey)] }));
   }
 
+  // ---------- team ----------
+
+  function addHandoverNote(author, note) {
+    const entry = { id: uid(), author, note, timestamp: Date.now(), acknowledgedBy: null };
+    setData((d) => ({ ...d, handoverNotes: [entry, ...d.handoverNotes] }));
+  }
+
+  function acknowledgeHandoverNote(id, by) {
+    setData((d) => ({ ...d, handoverNotes: d.handoverNotes.map((n) => (n.id === id ? { ...n, acknowledgedBy: by } : n)) }));
+  }
+
+  function addSop(sop) {
+    const entry = { id: uid(), version: 1, updatedAt: dateKey, ...sop };
+    setData((d) => ({ ...d, sops: [...d.sops, entry] }));
+  }
+
+  function removeSop(id) {
+    setData((d) => ({ ...d, sops: d.sops.filter((s) => s.id !== id) }));
+  }
+
+  function addStaffMember(member) {
+    const entry = { id: uid(), role: 'Staff', ...member };
+    setData((d) => ({ ...d, staff: [...d.staff, entry] }));
+  }
+
+  function removeStaffMember(id) {
+    setData((d) => ({ ...d, staff: d.staff.filter((s) => s.id !== id) }));
+  }
+
   const latestReadings = useMemo(() => {
     const map = {};
     for (const r of data.haccpReadings) {
@@ -296,6 +351,10 @@ export default function App() {
     attentionItems.push(`${missedOpening} opening task${missedOpening > 1 ? 's' : ''} still outstanding`);
   }
   lowStockProducts.forEach((p) => attentionItems.push(`${p.name} below par`));
+  const unackedHandover = data.handoverNotes.filter((n) => !n.acknowledgedBy);
+  if (unackedHandover.length > 0) {
+    attentionItems.push(`${unackedHandover.length} handover note${unackedHandover.length > 1 ? 's' : ''} unread`);
+  }
 
   const yesterdayKey = (() => {
     const d = new Date();
@@ -306,6 +365,7 @@ export default function App() {
 
   const [stockSubTab, setStockSubTab] = useState('live');
   const [moneySubTab, setMoneySubTab] = useState('close');
+  const [teamSubTab, setTeamSubTab] = useState('handover');
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', paddingBottom: 60 }}>
@@ -383,6 +443,22 @@ export default function App() {
             dateKey={dateKey}
           />
         )}
+
+        {tab === 'team' && (
+          <TeamScreen
+            subTab={teamSubTab}
+            setSubTab={setTeamSubTab}
+            handoverNotes={data.handoverNotes}
+            addHandoverNote={addHandoverNote}
+            acknowledgeHandoverNote={acknowledgeHandoverNote}
+            sops={data.sops}
+            addSop={addSop}
+            removeSop={removeSop}
+            staff={data.staff}
+            addStaffMember={addStaffMember}
+            removeStaffMember={removeStaffMember}
+          />
+        )}
       </div>
     </div>
   );
@@ -418,6 +494,7 @@ function TabNav({ tab, setTab }) {
     { id: 'stock', label: 'Stock' },
     { id: 'money', label: 'Money' },
     { id: 'coffee', label: 'Coffee' },
+    { id: 'team', label: 'Team' },
   ];
   return (
     <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', padding: '0 16px' }}>
@@ -1766,6 +1843,263 @@ function AddIngredient({ recipeId, updateRecipe, ingredients }) {
           Add
         </button>
       </div>
+    </div>
+  );
+}
+
+// ---------- TEAM ----------
+
+function TeamScreen({ subTab, setSubTab, handoverNotes, addHandoverNote, acknowledgeHandoverNote, sops, addSop, removeSop, staff, addStaffMember, removeStaffMember }) {
+  const subTabs = [
+    { id: 'handover', label: 'Handover' },
+    { id: 'sops', label: 'SOPs' },
+    { id: 'staff', label: 'Staff' },
+  ];
+  return (
+    <div style={{ paddingTop: 14 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {subTabs.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => setSubTab(s.id)}
+            style={{
+              background: subTab === s.id ? 'var(--bg-elevated)' : 'none',
+              border: '1px solid var(--border)',
+              color: 'var(--text-ivory)',
+              fontSize: 12,
+              padding: '8px 12px',
+              borderRadius: 8,
+            }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === 'handover' && <Handover notes={handoverNotes} addNote={addHandoverNote} acknowledge={acknowledgeHandoverNote} />}
+      {subTab === 'sops' && <SopLibrary sops={sops} addSop={addSop} removeSop={removeSop} />}
+      {subTab === 'staff' && <Staff staff={staff} addStaffMember={addStaffMember} removeStaffMember={removeStaffMember} />}
+    </div>
+  );
+}
+
+const inputStyleShared = {
+  width: '100%',
+  background: 'var(--bg-primary)',
+  border: '1px solid var(--border)',
+  color: 'var(--text-ivory)',
+  borderRadius: 8,
+  padding: '10px 12px',
+  fontSize: 14,
+};
+
+function Handover({ notes, addNote, acknowledge }) {
+  const [author, setAuthor] = useState('');
+  const [note, setNote] = useState('');
+  const [ackName, setAckName] = useState('');
+
+  function submit() {
+    if (!note.trim()) return;
+    addNote(author.trim() || 'Unnamed', note.trim());
+    setNote('');
+  }
+
+  return (
+    <div>
+      <Card>
+        <SectionLabel>Leave a note for the next shift</SectionLabel>
+        <div style={{ marginBottom: 8 }}>
+          <input placeholder="Your name" value={author} onChange={(e) => setAuthor(e.target.value)} style={{ ...inputStyleShared, marginBottom: 8 }} />
+          <textarea
+            placeholder="e.g. Grinder 2 running slightly slow, oat milk delivery arrived short 1 case"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            style={{ ...inputStyleShared, minHeight: 70, resize: 'vertical' }}
+          />
+        </div>
+        <button onClick={submit} style={{ ...ghostButtonStyle, background: 'var(--copper)', color: '#3C2E22', border: 'none', fontWeight: 500 }}>
+          Leave note
+        </button>
+      </Card>
+
+      <Card>
+        <SectionLabel>Notes</SectionLabel>
+        {notes.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Nothing left for the next shift.</div>
+        ) : (
+          notes.map((n) => (
+            <div key={n.id} style={{ padding: '10px 0', borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                <span>{n.author}</span>
+                <span>{fmtTime(n.timestamp)}</span>
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-ivory)', marginBottom: 6 }}>{n.note}</div>
+              {n.acknowledgedBy ? (
+                <div style={{ fontSize: 11, color: 'var(--status-green)' }}>✓ Acknowledged by {n.acknowledgedBy}</div>
+              ) : (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    placeholder="Your name to acknowledge"
+                    value={ackName}
+                    onChange={(e) => setAckName(e.target.value)}
+                    style={{ ...inputStyleShared, fontSize: 12, padding: '6px 8px', flex: 1 }}
+                  />
+                  <button
+                    onClick={() => {
+                      if (!ackName.trim()) return;
+                      acknowledge(n.id, ackName.trim());
+                      setAckName('');
+                    }}
+                    style={{ ...ghostButtonStyle, width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: 11 }}
+                  >
+                    Acknowledge
+                  </button>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function SopLibrary({ sops, addSop, removeSop }) {
+  const [showForm, setShowForm] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [form, setForm] = useState({ title: '', category: '', stepsText: '' });
+
+  function submit() {
+    if (!form.title.trim()) return;
+    addSop({
+      title: form.title,
+      category: form.category || 'General',
+      steps: form.stepsText.split('\n').map((s) => s.trim()).filter(Boolean),
+    });
+    setForm({ title: '', category: '', stepsText: '' });
+    setShowForm(false);
+  }
+
+  return (
+    <div>
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showForm ? 12 : 0 }}>
+          <SectionLabel>SOP library</SectionLabel>
+          <button onClick={() => setShowForm((v) => !v)} style={{ ...ghostButtonStyle, width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: 11 }}>
+            {showForm ? 'Cancel' : '+ Add'}
+          </button>
+        </div>
+        {showForm && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input placeholder="Title" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} style={{ ...inputStyleShared, fontSize: 13, padding: '8px 10px' }} />
+            <input placeholder="Category (e.g. Coffee, Food safety)" value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} style={{ ...inputStyleShared, fontSize: 13, padding: '8px 10px' }} />
+            <textarea
+              placeholder="One step per line"
+              value={form.stepsText}
+              onChange={(e) => setForm((f) => ({ ...f, stepsText: e.target.value }))}
+              style={{ ...inputStyleShared, fontSize: 13, padding: '8px 10px', minHeight: 90, resize: 'vertical' }}
+            />
+            <button onClick={submit} style={{ ...ghostButtonStyle, background: 'var(--copper)', color: '#3C2E22', border: 'none', fontWeight: 500 }}>
+              Add SOP
+            </button>
+          </div>
+        )}
+      </Card>
+
+      {sops.map((sop) => {
+        const isOpen = expandedId === sop.id;
+        return (
+          <Card key={sop.id}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => setExpandedId(isOpen ? null : sop.id)}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500 }}>{sop.title}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{sop.category}</div>
+              </div>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{isOpen ? '▲' : '▼'}</span>
+            </div>
+            {isOpen && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                <ol style={{ margin: 0, paddingLeft: 18 }}>
+                  {sop.steps.map((step, i) => (
+                    <li key={i} style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6, lineHeight: 1.5 }}>
+                      {step}
+                    </li>
+                  ))}
+                </ol>
+                <button
+                  onClick={() => removeSop(sop.id)}
+                  style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, padding: '6px 10px', borderRadius: 8, marginTop: 8 }}
+                >
+                  Remove SOP
+                </button>
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function Staff({ staff, addStaffMember, removeStaffMember }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ name: '', role: 'Staff' });
+
+  function submit() {
+    if (!form.name.trim()) return;
+    addStaffMember({ name: form.name, role: form.role });
+    setForm({ name: '', role: 'Staff' });
+    setShowForm(false);
+  }
+
+  return (
+    <div>
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showForm ? 12 : 0 }}>
+          <SectionLabel>Staff</SectionLabel>
+          <button onClick={() => setShowForm((v) => !v)} style={{ ...ghostButtonStyle, width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: 11 }}>
+            {showForm ? 'Cancel' : '+ Add'}
+          </button>
+        </div>
+        {showForm && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input placeholder="Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={{ ...inputStyleShared, fontSize: 13, padding: '8px 10px' }} />
+            <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} style={{ ...inputStyleShared, fontSize: 13, padding: '8px 10px' }}>
+              {STAFF_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+            <button onClick={submit} style={{ ...ghostButtonStyle, background: 'var(--copper)', color: '#3C2E22', border: 'none', fontWeight: 500 }}>
+              Add staff member
+            </button>
+          </div>
+        )}
+      </Card>
+
+      {staff.length === 0 ? (
+        <Card>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No staff added yet.</div>
+        </Card>
+      ) : (
+        staff.map((member) => (
+          <Card key={member.id}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500 }}>{member.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{member.role}</div>
+              </div>
+              <button
+                onClick={() => removeStaffMember(member.id)}
+                style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, padding: '6px 10px', borderRadius: 8 }}
+              >
+                Remove
+              </button>
+            </div>
+          </Card>
+        ))
+      )}
     </div>
   );
 }
