@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 
 // ---------- persistence ----------
 
@@ -14,13 +14,28 @@ function loadState() {
   return null;
 }
 
+function exportDataAsFile(data) {
+  const bundle = { exportedAt: new Date().toISOString(), data };
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `cafehub-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+const ONBOARDED_KEY = 'cafehub_onboarded';
+
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
 // ---------- default data ----------
 
-const OPENING_TEMPLATE = [
+const DEFAULT_OPENING_TEMPLATE = [
   {
     category: 'Exterior',
     tasks: ['Frontage clean', 'Outdoor furniture arranged', 'Signage placed', 'Exterior lights checked'],
@@ -43,7 +58,7 @@ const OPENING_TEMPLATE = [
   },
 ];
 
-const CLOSING_TEMPLATE = [
+const DEFAULT_CLOSING_TEMPLATE = [
   {
     category: 'Coffee station',
     tasks: ['Backflush machine', 'Clean group heads', 'Clean steam wands', 'Empty knockbox', 'Clean grinders', 'Hopper coffee stored', 'Filter brewer cleaned'],
@@ -134,7 +149,11 @@ const DEFAULT_PRODUCTS = [
 
 function defaultState() {
   return {
+    cafeName: '',
+    remindersEnabled: false,
     tasks: {},
+    openingTemplate: DEFAULT_OPENING_TEMPLATE,
+    closingTemplate: DEFAULT_CLOSING_TEMPLATE,
     haccpDevices: DEFAULT_HACCP_DEVICES,
     haccpReadings: [],
     coffees: [DEFAULT_COFFEE],
@@ -142,8 +161,12 @@ function defaultState() {
     products: DEFAULT_PRODUCTS,
     waste: [],
     orders: [],
+    deliveries: [],
     recipes: DEFAULT_RECIPES,
+    filterRecipes: [],
     dailyCloses: [],
+    priceAlerts: [],
+    incidents: [],
     handoverNotes: [],
     sops: DEFAULT_SOPS,
     staff: [],
@@ -164,12 +187,120 @@ function taskId(listType, category, task) {
   return `${listType}::${category}::${task}`;
 }
 
+// ---------- SETUP WIZARD (first run only) ----------
+
+function SetupWizard({ cafeName, setCafeName, openingTemplate, updateOpeningTemplate, devices, addHaccpDevice, updateHaccpDevice, removeHaccpDevice, onFinish }) {
+  const [step, setStep] = useState(0);
+  const steps = ['Welcome', 'Your café', 'Your fridges', 'Your opening checklist', 'Done'];
+
+  const inputStyle = {
+    width: '100%',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-ivory)',
+    borderRadius: 8,
+    padding: '12px 14px',
+    fontSize: 16,
+  };
+
+  return (
+    <div style={{ maxWidth: 720, margin: '0 auto', padding: '40px 16px', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ fontSize: 11, letterSpacing: 1, color: 'var(--copper)', fontWeight: 500, marginBottom: 8 }}>
+        SETUP · STEP {step + 1} OF {steps.length}
+      </div>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 600, marginBottom: 20 }}>{steps[step]}</div>
+
+      {step === 0 && (
+        <div style={{ flex: 1 }}>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 24 }}>
+            Café Hub adapts to how your café actually runs. This takes two minutes — confirm your fridges and your opening
+            checklist so they match reality from day one. Everything here can be changed again later in Operations → Settings.
+          </p>
+        </div>
+      )}
+
+      {step === 1 && (
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Café name</div>
+          <input value={cafeName} onChange={(e) => setCafeName(e.target.value)} placeholder="e.g. Ranelagh" style={inputStyle} />
+        </div>
+      )}
+
+      {step === 2 && (
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14 }}>
+            These came pre-filled as a starting point — rename them, change the temperature ranges, remove what you don't have, or add more.
+          </p>
+          <HaccpDeviceEditor devices={devices} addHaccpDevice={addHaccpDevice} updateHaccpDevice={updateHaccpDevice} removeHaccpDevice={removeHaccpDevice} />
+        </div>
+      )}
+
+      {step === 3 && (
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14 }}>
+            Same idea — edit categories and tasks to match your actual opening routine. Closing works the same way, editable
+            later in Operations → Settings.
+          </p>
+          <ChecklistEditor template={openingTemplate} onChange={updateOpeningTemplate} />
+        </div>
+      )}
+
+      {step === 4 && (
+        <div style={{ flex: 1 }}>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 24 }}>
+            You're set up. Everything here — checklists, fridges, and everything else in the app — stays editable any time
+            from Operations → Settings.
+          </p>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+        {step > 0 && (
+          <button
+            onClick={() => setStep((s) => s - 1)}
+            style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-ivory)', fontSize: 13, padding: '10px 20px', borderRadius: 8 }}
+          >
+            Back
+          </button>
+        )}
+        {step < steps.length - 1 ? (
+          <button
+            onClick={() => setStep((s) => s + 1)}
+            style={{ background: 'var(--copper)', color: '#3C2E22', border: 'none', fontSize: 13, fontWeight: 500, padding: '10px 24px', borderRadius: 8, marginLeft: 'auto' }}
+          >
+            Continue →
+          </button>
+        ) : (
+          <button
+            onClick={onFinish}
+            style={{ background: 'var(--copper)', color: '#3C2E22', border: 'none', fontSize: 13, fontWeight: 500, padding: '10px 24px', borderRadius: 8, marginLeft: 'auto' }}
+          >
+            Enter Café Hub →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- app ----------
 
 export default function App() {
-  const [data, setData] = useState(() => ({ ...defaultState(), ...(loadState() || {}) }));
+  const [data, setData] = useState(() => {
+    const merged = { ...defaultState(), ...(loadState() || {}) };
+    // Migrate any orders saved before Deliveries existed (old shape had
+    // `itemIds` only, no `items`/`status`) so old data can't crash the
+    // new Orders/Deliveries screens the way missing fields did before.
+    merged.orders = (merged.orders || []).map((o) =>
+      o.items
+        ? o
+        : { ...o, status: o.status || 'ordered', items: (o.itemIds || []).map((id) => ({ productId: id, name: 'Unknown item', unit: '', qtyOrdered: 0 })) }
+    );
+    return merged;
+  });
   const [tab, setTab] = useState('today');
   const [opsSubTab, setOpsSubTab] = useState('opening');
+  const [showWizard, setShowWizard] = useState(() => !loadState() && localStorage.getItem(ONBOARDED_KEY) !== 'true');
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -206,8 +337,8 @@ export default function App() {
     return { done, total };
   }
 
-  const openingProgress = progressFor(OPENING_TEMPLATE, 'opening');
-  const closingProgress = progressFor(CLOSING_TEMPLATE, 'closing');
+  const openingProgress = progressFor(data.openingTemplate, 'opening');
+  const closingProgress = progressFor(data.closingTemplate, 'closing');
 
   function addHaccpReading(deviceId, reading) {
     const device = data.haccpDevices.find((d) => d.id === deviceId);
@@ -231,6 +362,28 @@ export default function App() {
     }));
   }
 
+  // ---------- adaptable config ----------
+
+  function updateOpeningTemplate(template) {
+    setData((d) => ({ ...d, openingTemplate: template }));
+  }
+
+  function updateClosingTemplate(template) {
+    setData((d) => ({ ...d, closingTemplate: template }));
+  }
+
+  function addHaccpDevice(device) {
+    setData((d) => ({ ...d, haccpDevices: [...d.haccpDevices, { id: uid(), min: 0, max: 5, ...device }] }));
+  }
+
+  function updateHaccpDevice(id, patch) {
+    setData((d) => ({ ...d, haccpDevices: d.haccpDevices.map((dev) => (dev.id === id ? { ...dev, ...patch } : dev)) }));
+  }
+
+  function removeHaccpDevice(id) {
+    setData((d) => ({ ...d, haccpDevices: d.haccpDevices.filter((dev) => dev.id !== id) }));
+  }
+
   function addDialIn(coffeeId, dose, yield_, time, taste, note) {
     const entry = { id: uid(), coffeeId, dose, yield: yield_, time, taste, note, timestamp: Date.now() };
     setData((d) => ({ ...d, dialIns: [entry, ...d.dialIns] }));
@@ -244,7 +397,18 @@ export default function App() {
   }
 
   function updateProduct(id, patch) {
-    setData((d) => ({ ...d, products: d.products.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
+    setData((d) => {
+      const existing = d.products.find((p) => p.id === id);
+      let priceAlerts = d.priceAlerts;
+      if (existing && patch.cost !== undefined && patch.cost !== existing.cost && existing.cost > 0) {
+        const pctChange = Math.round(((patch.cost - existing.cost) / existing.cost) * 1000) / 10;
+        priceAlerts = [
+          { id: uid(), productId: id, productName: existing.name, oldCost: existing.cost, newCost: patch.cost, pctChange, timestamp: Date.now(), dismissed: false },
+          ...priceAlerts,
+        ];
+      }
+      return { ...d, products: d.products.map((p) => (p.id === id ? { ...p, ...patch } : p)), priceAlerts };
+    });
   }
 
   function removeProduct(id) {
@@ -267,9 +431,32 @@ export default function App() {
     return entry;
   }
 
-  function markOrdered(supplier, itemIds) {
-    const entry = { id: uid(), supplier, itemIds, timestamp: Date.now() };
+  function markOrdered(supplier, items) {
+    const entry = { id: uid(), supplier, items, status: 'ordered', timestamp: Date.now() };
     setData((d) => ({ ...d, orders: [entry, ...d.orders] }));
+  }
+
+  function receiveDelivery(orderId, receivedItems, tempC, notes) {
+    const order = data.orders.find((o) => o.id === orderId);
+    if (!order) return;
+    const delivery = {
+      id: uid(),
+      orderId,
+      supplier: order.supplier,
+      items: receivedItems,
+      tempC: tempC || null,
+      notes: notes || '',
+      timestamp: Date.now(),
+    };
+    setData((d) => ({
+      ...d,
+      deliveries: [delivery, ...d.deliveries],
+      orders: d.orders.map((o) => (o.id === orderId ? { ...o, status: 'received' } : o)),
+      products: d.products.map((p) => {
+        const received = receivedItems.find((r) => r.productId === p.id);
+        return received ? { ...p, current: Math.round((p.current + (received.qtyReceived || 0)) * 100) / 100 } : p;
+      }),
+    }));
   }
 
   // ---------- money ----------
@@ -312,6 +499,52 @@ export default function App() {
     setData((d) => ({ ...d, sops: d.sops.filter((s) => s.id !== id) }));
   }
 
+  // ---------- incidents ----------
+
+  function addIncident(incident) {
+    const entry = { id: uid(), status: 'open', timestamp: Date.now(), ...incident };
+    setData((d) => ({ ...d, incidents: [entry, ...d.incidents] }));
+  }
+
+  function updateIncident(id, patch) {
+    setData((d) => ({ ...d, incidents: d.incidents.map((i) => (i.id === id ? { ...i, ...patch } : i)) }));
+  }
+
+  function removeIncident(id) {
+    setData((d) => ({ ...d, incidents: d.incidents.filter((i) => i.id !== id) }));
+  }
+
+  // ---------- filter recipes ----------
+
+  function addFilterRecipe(recipe) {
+    setData((d) => ({ ...d, filterRecipes: [...d.filterRecipes, { id: uid(), ...recipe }] }));
+  }
+
+  function updateFilterRecipe(id, patch) {
+    setData((d) => ({ ...d, filterRecipes: d.filterRecipes.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+  }
+
+  function removeFilterRecipe(id) {
+    setData((d) => ({ ...d, filterRecipes: d.filterRecipes.filter((r) => r.id !== id) }));
+  }
+
+  // ---------- price alerts ----------
+
+  function dismissPriceAlert(id) {
+    setData((d) => ({ ...d, priceAlerts: d.priceAlerts.map((a) => (a.id === id ? { ...a, dismissed: true } : a)) }));
+  }
+
+  function applyPriceAlertToIngredient(alertId, recipeId, ingredientId, pctChange) {
+    setData((d) => ({
+      ...d,
+      recipes: d.recipes.map((r) =>
+        r.id === recipeId
+          ? { ...r, ingredients: r.ingredients.map((ing) => (ing.id === ingredientId ? { ...ing, packCost: Math.round(ing.packCost * (1 + pctChange / 100) * 100) / 100 } : ing)) }
+          : r
+      ),
+    }));
+  }
+
   function addStaffMember(member) {
     const entry = { id: uid(), role: 'Staff', ...member };
     setData((d) => ({ ...d, staff: [...d.staff, entry] }));
@@ -345,7 +578,7 @@ export default function App() {
   if (openHaccpExceptions.length > 0) {
     attentionItems.push(`${openHaccpExceptions.length} HACCP reading${openHaccpExceptions.length > 1 ? 's' : ''} outside range, unresolved`);
   }
-  const missedOpening = OPENING_TEMPLATE.flatMap((cat) => cat.tasks).length - openingProgress.done;
+  const missedOpening = data.openingTemplate.flatMap((cat) => cat.tasks).length - openingProgress.done;
   const now = new Date();
   if (missedOpening > 0 && now.getHours() >= 10) {
     attentionItems.push(`${missedOpening} opening task${missedOpening > 1 ? 's' : ''} still outstanding`);
@@ -355,6 +588,80 @@ export default function App() {
   if (unackedHandover.length > 0) {
     attentionItems.push(`${unackedHandover.length} handover note${unackedHandover.length > 1 ? 's' : ''} unread`);
   }
+  const openIncidents = data.incidents.filter((i) => i.status === 'open');
+  if (openIncidents.length > 0) {
+    attentionItems.push(`${openIncidents.length} open incident${openIncidents.length > 1 ? 's' : ''}`);
+  }
+
+  // ---------- reminders (best-effort, only while this tab is open) ----------
+  // There's no backend/push infrastructure behind this — it's a plain
+  // browser Notification fired from a periodic check while the tab is
+  // open (including backgrounded/minimized). It will NOT fire if the
+  // browser or tab is fully closed. Honest limitation, not a bug.
+  const lastNotifiedRef = useRef(0);
+  useEffect(() => {
+    if (!data.remindersEnabled) return;
+    if (typeof Notification === 'undefined') return;
+    const checkInterval = setInterval(() => {
+      if (Notification.permission !== 'granted') return;
+      if (attentionItems.length === 0) return;
+      const now = Date.now();
+      if (now - lastNotifiedRef.current < 55 * 60 * 1000) return; // at most once an hour
+      lastNotifiedRef.current = now;
+      new Notification('Café Hub — needs attention', { body: attentionItems.slice(0, 4).join('\n') });
+    }, 5 * 60 * 1000); // check every 5 minutes
+    return () => clearInterval(checkInterval);
+  }, [data.remindersEnabled, attentionItems.join('|')]);
+
+  function setCafeName(name) {
+    setData((d) => ({ ...d, cafeName: name }));
+  }
+
+  function setRemindersEnabled(enabled) {
+    if (enabled && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+    setData((d) => ({ ...d, remindersEnabled: enabled }));
+  }
+
+  function finishWizard() {
+    localStorage.setItem(ONBOARDED_KEY, 'true');
+    setShowWizard(false);
+  }
+
+  function restoreFromFile(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target.result);
+        const incoming = parsed.data || parsed; // accept either the wrapped backup shape or a raw data object
+        setData((d) => ({ ...d, ...incoming }));
+      } catch (err) {
+        alert('Could not read that file — make sure it is a Café Hub backup JSON.');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  const [stockSubTab, setStockSubTab] = useState('live');
+  const [moneySubTab, setMoneySubTab] = useState('close');
+  const [teamSubTab, setTeamSubTab] = useState('handover');
+
+  if (showWizard) {
+    return (
+      <SetupWizard
+        cafeName={data.cafeName}
+        setCafeName={setCafeName}
+        openingTemplate={data.openingTemplate}
+        updateOpeningTemplate={updateOpeningTemplate}
+        devices={data.haccpDevices}
+        addHaccpDevice={addHaccpDevice}
+        updateHaccpDevice={updateHaccpDevice}
+        removeHaccpDevice={removeHaccpDevice}
+        onFinish={finishWizard}
+      />
+    );
+  }
 
   const yesterdayKey = (() => {
     const d = new Date();
@@ -363,13 +670,16 @@ export default function App() {
   })();
   const yesterdayClose = data.dailyCloses.find((c) => c.date === yesterdayKey);
 
-  const [stockSubTab, setStockSubTab] = useState('live');
-  const [moneySubTab, setMoneySubTab] = useState('close');
-  const [teamSubTab, setTeamSubTab] = useState('handover');
-
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', paddingBottom: 60 }}>
-      <Header dateKey={dateKey} />
+      <Header
+        dateKey={dateKey}
+        cafeName={data.cafeName}
+        remindersEnabled={data.remindersEnabled}
+        setRemindersEnabled={setRemindersEnabled}
+        onExport={() => exportDataAsFile(data)}
+        onImportFile={restoreFromFile}
+      />
       <TabNav tab={tab} setTab={setTab} />
 
       <div style={{ padding: '0 16px' }}>
@@ -399,16 +709,36 @@ export default function App() {
             setSubTab={setOpsSubTab}
             todaysTasks={todaysTasks}
             setTaskStatus={setTaskStatus}
+            openingTemplate={data.openingTemplate}
+            closingTemplate={data.closingTemplate}
+            updateOpeningTemplate={updateOpeningTemplate}
+            updateClosingTemplate={updateClosingTemplate}
             devices={data.haccpDevices}
             readings={data.haccpReadings}
             latestReadings={latestReadings}
             addHaccpReading={addHaccpReading}
             setCorrectiveAction={setCorrectiveAction}
+            addHaccpDevice={addHaccpDevice}
+            updateHaccpDevice={updateHaccpDevice}
+            removeHaccpDevice={removeHaccpDevice}
+            incidents={data.incidents}
+            addIncident={addIncident}
+            updateIncident={updateIncident}
+            removeIncident={removeIncident}
           />
         )}
 
         {tab === 'coffee' && (
-          <CoffeeScreen coffees={data.coffees} dialIns={data.dialIns} addDialIn={addDialIn} />
+          <CoffeeScreen
+            coffees={data.coffees}
+            dialIns={data.dialIns}
+            addDialIn={addDialIn}
+            recipes={data.recipes}
+            filterRecipes={data.filterRecipes}
+            addFilterRecipe={addFilterRecipe}
+            updateFilterRecipe={updateFilterRecipe}
+            removeFilterRecipe={removeFilterRecipe}
+          />
         )}
 
         {tab === 'stock' && (
@@ -418,12 +748,14 @@ export default function App() {
             products={data.products}
             waste={data.waste}
             orders={data.orders}
+            deliveries={data.deliveries}
             addProduct={addProduct}
             updateProduct={updateProduct}
             removeProduct={removeProduct}
             setStockCount={setStockCount}
             logWaste={logWaste}
             markOrdered={markOrdered}
+            receiveDelivery={receiveDelivery}
           />
         )}
 
@@ -441,6 +773,9 @@ export default function App() {
               .filter((w) => new Date(w.timestamp).toISOString().slice(0, 10) === dateKey)
               .reduce((sum, w) => sum + (w.cost || 0), 0)}
             dateKey={dateKey}
+            priceAlerts={data.priceAlerts}
+            dismissPriceAlert={dismissPriceAlert}
+            applyPriceAlertToIngredient={applyPriceAlertToIngredient}
           />
         )}
 
@@ -466,15 +801,44 @@ export default function App() {
 
 // ---------- header + nav ----------
 
-function Header({ dateKey }) {
+function Header({ dateKey, cafeName, remindersEnabled, setRemindersEnabled, onExport, onImportFile }) {
   const d = new Date(dateKey);
   const dateLabel = d.toLocaleDateString('en-IE', { weekday: 'long', day: 'numeric', month: 'long' }).toUpperCase();
 
   return (
     <div style={{ padding: '20px 16px 12px', borderBottom: '1px solid var(--border)' }}>
-      <div style={{ fontSize: 11, letterSpacing: 1, color: 'var(--copper)', fontWeight: 500 }}>FDC OPERATIONS</div>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 600, color: 'var(--text-ivory)', lineHeight: 1.1, marginTop: 2 }}>
-        Café Hub
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ fontSize: 11, letterSpacing: 1, color: 'var(--copper)', fontWeight: 500 }}>FDC OPERATIONS</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, fontWeight: 600, color: 'var(--text-ivory)', lineHeight: 1.1, marginTop: 2 }}>
+            Café Hub
+          </div>
+          {cafeName && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{cafeName}</div>}
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button
+            onClick={() => setRemindersEnabled(!remindersEnabled)}
+            title={remindersEnabled ? 'Reminders on — tap to turn off' : 'Reminders off — tap to turn on (only fires while this tab is open)'}
+            style={{ background: 'none', border: 'none', fontSize: 16, color: remindersEnabled ? 'var(--copper)' : 'var(--text-muted)', cursor: 'pointer' }}
+          >
+            {remindersEnabled ? '🔔' : '🔕'}
+          </button>
+          <button onClick={onExport} title="Download a backup of all your data" style={{ background: 'none', border: 'none', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            ⤓
+          </button>
+          <label title="Restore from a backup file" style={{ fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            ⤒
+            <input
+              type="file"
+              accept=".json"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                if (e.target.files[0]) onImportFile(e.target.files[0]);
+                e.target.value = '';
+              }}
+            />
+          </label>
+        </div>
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'flex', justifyContent: 'space-between' }}>
         <span>{dateLabel}</span>
@@ -711,15 +1075,38 @@ const ghostButtonStyle = {
 
 // ---------- OPERATIONS ----------
 
-function OperationsScreen({ subTab, setSubTab, todaysTasks, setTaskStatus, devices, readings, latestReadings, addHaccpReading, setCorrectiveAction }) {
+function OperationsScreen({
+  subTab,
+  setSubTab,
+  todaysTasks,
+  setTaskStatus,
+  openingTemplate,
+  closingTemplate,
+  updateOpeningTemplate,
+  updateClosingTemplate,
+  devices,
+  readings,
+  latestReadings,
+  addHaccpReading,
+  setCorrectiveAction,
+  addHaccpDevice,
+  updateHaccpDevice,
+  removeHaccpDevice,
+  incidents,
+  addIncident,
+  updateIncident,
+  removeIncident,
+}) {
   const subTabs = [
     { id: 'opening', label: 'Opening' },
     { id: 'closing', label: 'Closing' },
     { id: 'haccp', label: 'HACCP' },
+    { id: 'incidents', label: 'Incidents' },
+    { id: 'settings', label: 'Settings' },
   ];
   return (
     <div style={{ paddingTop: 14 }}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
         {subTabs.map((s) => (
           <button
             key={s.id}
@@ -739,10 +1126,10 @@ function OperationsScreen({ subTab, setSubTab, todaysTasks, setTaskStatus, devic
       </div>
 
       {subTab === 'opening' && (
-        <Checklist listType="opening" template={OPENING_TEMPLATE} todaysTasks={todaysTasks} setTaskStatus={setTaskStatus} />
+        <Checklist listType="opening" template={openingTemplate} todaysTasks={todaysTasks} setTaskStatus={setTaskStatus} />
       )}
       {subTab === 'closing' && (
-        <Checklist listType="closing" template={CLOSING_TEMPLATE} todaysTasks={todaysTasks} setTaskStatus={setTaskStatus} />
+        <Checklist listType="closing" template={closingTemplate} todaysTasks={todaysTasks} setTaskStatus={setTaskStatus} />
       )}
       {subTab === 'haccp' && (
         <HaccpPanel
@@ -751,6 +1138,21 @@ function OperationsScreen({ subTab, setSubTab, todaysTasks, setTaskStatus, devic
           latestReadings={latestReadings}
           addHaccpReading={addHaccpReading}
           setCorrectiveAction={setCorrectiveAction}
+        />
+      )}
+      {subTab === 'incidents' && (
+        <Incidents incidents={incidents} addIncident={addIncident} updateIncident={updateIncident} removeIncident={removeIncident} />
+      )}
+      {subTab === 'settings' && (
+        <OperationsSettings
+          openingTemplate={openingTemplate}
+          closingTemplate={closingTemplate}
+          updateOpeningTemplate={updateOpeningTemplate}
+          updateClosingTemplate={updateClosingTemplate}
+          devices={devices}
+          addHaccpDevice={addHaccpDevice}
+          updateHaccpDevice={updateHaccpDevice}
+          removeHaccpDevice={removeHaccpDevice}
         />
       )}
     </div>
@@ -914,9 +1316,351 @@ function HaccpPanel({ devices, readings, latestReadings, addHaccpReading, setCor
   );
 }
 
+// ---------- OPERATIONS SETTINGS (adaptable config) ----------
+
+const INCIDENT_CATEGORIES = ['Equipment failure', 'Customer complaint', 'Accident', 'Food-safety incident', 'Staff injury', 'Property issue', 'Supplier issue'];
+
+function Incidents({ incidents, addIncident, updateIncident, removeIncident }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ category: 'Equipment failure', description: '', reportedBy: '', actionTaken: '' });
+
+  const inputStyle = {
+    width: '100%',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-ivory)',
+    borderRadius: 8,
+    padding: '10px 12px',
+    fontSize: 14,
+  };
+
+  function submit() {
+    if (!form.description.trim()) return;
+    addIncident(form);
+    setForm({ category: 'Equipment failure', description: '', reportedBy: '', actionTaken: '' });
+    setShowForm(false);
+  }
+
+  const open = incidents.filter((i) => i.status === 'open');
+  const resolved = incidents.filter((i) => i.status === 'resolved');
+
+  return (
+    <div>
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showForm ? 12 : 0 }}>
+          <SectionLabel>Report an incident</SectionLabel>
+          <button onClick={() => setShowForm((v) => !v)} style={{ ...ghostButtonStyle, width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: 11 }}>
+            {showForm ? 'Cancel' : '+ New'}
+          </button>
+        </div>
+        {showForm && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))} style={inputStyle}>
+              {INCIDENT_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <textarea
+              placeholder="What happened?"
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }}
+            />
+            <input placeholder="Reported by" value={form.reportedBy} onChange={(e) => setForm((f) => ({ ...f, reportedBy: e.target.value }))} style={inputStyle} />
+            <input placeholder="Action taken (optional)" value={form.actionTaken} onChange={(e) => setForm((f) => ({ ...f, actionTaken: e.target.value }))} style={inputStyle} />
+            <button onClick={submit} style={{ ...ghostButtonStyle, background: 'var(--copper)', color: '#3C2E22', border: 'none', fontWeight: 500 }}>
+              Log incident
+            </button>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <SectionLabel>Open</SectionLabel>
+        {open.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Nothing open.</div>
+        ) : (
+          open.map((i) => (
+            <div key={i.id} style={{ padding: '10px 0', borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--copper)', marginBottom: 4 }}>
+                <span>{i.category}</span>
+                <span>{fmtTime(i.timestamp)}</span>
+              </div>
+              <div style={{ fontSize: 13, marginBottom: 4 }}>{i.description}</div>
+              {i.reportedBy && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Reported by {i.reportedBy}</div>}
+              {i.actionTaken && <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>Action: {i.actionTaken}</div>}
+              <button
+                onClick={() => updateIncident(i.id, { status: 'resolved' })}
+                style={{ ...ghostButtonStyle, width: 'auto', marginTop: 8, padding: '6px 12px', fontSize: 11 }}
+              >
+                Mark resolved
+              </button>
+            </div>
+          ))
+        )}
+      </Card>
+
+      {resolved.length > 0 && (
+        <Card>
+          <SectionLabel>Resolved</SectionLabel>
+          {resolved.map((i) => (
+            <div key={i.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-muted)', padding: '6px 0', borderTop: '1px solid var(--border)' }}>
+              <span>
+                {i.category} — {i.description}
+              </span>
+              <button onClick={() => removeIncident(i.id)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 11 }}>
+                Remove
+              </button>
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function OperationsSettings({ openingTemplate, closingTemplate, updateOpeningTemplate, updateClosingTemplate, devices, addHaccpDevice, updateHaccpDevice, removeHaccpDevice }) {
+  const [editing, setEditing] = useState('opening'); // 'opening' | 'closing' | 'haccp'
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+        Every café runs differently — edit these to match how yours actually works. Changes apply immediately.
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {[
+          ['opening', 'Opening checklist'],
+          ['closing', 'Closing checklist'],
+          ['haccp', 'HACCP devices'],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setEditing(id)}
+            style={{
+              background: editing === id ? 'var(--copper)' : 'none',
+              color: editing === id ? '#3C2E22' : 'var(--text-muted)',
+              border: `1px solid ${editing === id ? 'var(--copper)' : 'var(--border)'}`,
+              fontSize: 11,
+              padding: '6px 10px',
+              borderRadius: 8,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {editing === 'opening' && <ChecklistEditor template={openingTemplate} onChange={updateOpeningTemplate} />}
+      {editing === 'closing' && <ChecklistEditor template={closingTemplate} onChange={updateClosingTemplate} />}
+      {editing === 'haccp' && (
+        <HaccpDeviceEditor devices={devices} addHaccpDevice={addHaccpDevice} updateHaccpDevice={updateHaccpDevice} removeHaccpDevice={removeHaccpDevice} />
+      )}
+    </div>
+  );
+}
+
+function ChecklistEditor({ template, onChange }) {
+  const [newCategoryName, setNewCategoryName] = useState('');
+
+  const inputSm = {
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-ivory)',
+    borderRadius: 6,
+    padding: '6px 8px',
+    fontSize: 12,
+  };
+
+  function renameCategory(catIdx, name) {
+    const next = template.map((c, i) => (i === catIdx ? { ...c, category: name } : c));
+    onChange(next);
+  }
+
+  function removeCategory(catIdx) {
+    onChange(template.filter((_, i) => i !== catIdx));
+  }
+
+  function addTask(catIdx) {
+    const next = template.map((c, i) => (i === catIdx ? { ...c, tasks: [...c.tasks, 'New task'] } : c));
+    onChange(next);
+  }
+
+  function renameTask(catIdx, taskIdx, value) {
+    const next = template.map((c, i) => (i === catIdx ? { ...c, tasks: c.tasks.map((t, j) => (j === taskIdx ? value : t)) } : c));
+    onChange(next);
+  }
+
+  function removeTask(catIdx, taskIdx) {
+    const next = template.map((c, i) => (i === catIdx ? { ...c, tasks: c.tasks.filter((_, j) => j !== taskIdx) } : c));
+    onChange(next);
+  }
+
+  function addCategory() {
+    if (!newCategoryName.trim()) return;
+    onChange([...template, { category: newCategoryName.trim(), tasks: [] }]);
+    setNewCategoryName('');
+  }
+
+  return (
+    <div>
+      {template.map((cat, catIdx) => (
+        <Card key={catIdx}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <input
+              value={cat.category}
+              onChange={(e) => renameCategory(catIdx, e.target.value)}
+              style={{ ...inputSm, flex: 1, fontSize: 13, fontWeight: 500 }}
+            />
+            <button
+              onClick={() => removeCategory(catIdx)}
+              style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, padding: '6px 8px', borderRadius: 6 }}
+            >
+              Remove category
+            </button>
+          </div>
+          {cat.tasks.map((task, taskIdx) => (
+            <div key={taskIdx} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+              <input value={task} onChange={(e) => renameTask(catIdx, taskIdx, e.target.value)} style={{ ...inputSm, flex: 1 }} />
+              <button
+                onClick={() => removeTask(catIdx, taskIdx)}
+                style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 14, padding: '2px 10px', borderRadius: 6 }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button onClick={() => addTask(catIdx)} style={{ ...ghostButtonStyle, width: 'auto', marginTop: 4, padding: '6px 12px', fontSize: 11 }}>
+            + Add task
+          </button>
+        </Card>
+      ))}
+
+      <Card>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            placeholder="New category name"
+            value={newCategoryName}
+            onChange={(e) => setNewCategoryName(e.target.value)}
+            style={{ ...inputSm, flex: 1 }}
+          />
+          <button onClick={addCategory} style={{ ...ghostButtonStyle, width: 'auto', marginTop: 0, padding: '8px 14px', fontSize: 12 }}>
+            + Add category
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function HaccpDeviceEditor({ devices, addHaccpDevice, updateHaccpDevice, removeHaccpDevice }) {
+  const [form, setForm] = useState({ name: '', min: 0, max: 5 });
+
+  const inputSm = {
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-ivory)',
+    borderRadius: 6,
+    padding: '6px 8px',
+    fontSize: 12,
+  };
+
+  function submit() {
+    if (!form.name.trim()) return;
+    addHaccpDevice({ name: form.name, min: parseFloat(form.min) || 0, max: parseFloat(form.max) || 5 });
+    setForm({ name: '', min: 0, max: 5 });
+  }
+
+  return (
+    <div>
+      {devices.map((dev) => (
+        <Card key={dev.id}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input value={dev.name} onChange={(e) => updateHaccpDevice(dev.id, { name: e.target.value })} style={{ ...inputSm, flex: 2 }} />
+            <input
+              type="number"
+              value={dev.min}
+              onChange={(e) => updateHaccpDevice(dev.id, { min: parseFloat(e.target.value) || 0 })}
+              style={{ ...inputSm, width: 60 }}
+            />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>to</span>
+            <input
+              type="number"
+              value={dev.max}
+              onChange={(e) => updateHaccpDevice(dev.id, { max: parseFloat(e.target.value) || 0 })}
+              style={{ ...inputSm, width: 60 }}
+            />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>°C</span>
+            <button
+              onClick={() => removeHaccpDevice(dev.id)}
+              style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, padding: '6px 8px', borderRadius: 6 }}
+            >
+              Remove
+            </button>
+          </div>
+        </Card>
+      ))}
+
+      <Card>
+        <SectionLabel>Add a device</SectionLabel>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <input placeholder="Name (e.g. Display fridge)" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={{ ...inputSm, flex: 1 }} />
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+          <input type="number" placeholder="Min °C" value={form.min} onChange={(e) => setForm((f) => ({ ...f, min: e.target.value }))} style={{ ...inputSm, width: 80 }} />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>to</span>
+          <input type="number" placeholder="Max °C" value={form.max} onChange={(e) => setForm((f) => ({ ...f, max: e.target.value }))} style={{ ...inputSm, width: 80 }} />
+        </div>
+        <button onClick={submit} style={{ ...ghostButtonStyle, background: 'var(--copper)', color: '#3C2E22', border: 'none', fontWeight: 500 }}>
+          Add device
+        </button>
+      </Card>
+    </div>
+  );
+}
+
 // ---------- COFFEE ----------
 
-function CoffeeScreen({ coffees, dialIns, addDialIn }) {
+function CoffeeScreen({ coffees, dialIns, addDialIn, recipes, filterRecipes, addFilterRecipe, updateFilterRecipe, removeFilterRecipe }) {
+  const [subTab, setSubTab] = useState('dialin');
+  const subTabs = [
+    { id: 'dialin', label: 'Dial-in' },
+    { id: 'recipes', label: 'Recipes' },
+    { id: 'filter', label: 'Filter' },
+  ];
+
+  return (
+    <div style={{ paddingTop: 14 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {subTabs.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => setSubTab(s.id)}
+            style={{
+              background: subTab === s.id ? 'var(--bg-elevated)' : 'none',
+              border: '1px solid var(--border)',
+              color: 'var(--text-ivory)',
+              fontSize: 12,
+              padding: '8px 12px',
+              borderRadius: 8,
+            }}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === 'dialin' && <DialInScreen coffees={coffees} dialIns={dialIns} addDialIn={addDialIn} />}
+      {subTab === 'recipes' && <StaffRecipeCards recipes={recipes} />}
+      {subTab === 'filter' && (
+        <FilterRecipes filterRecipes={filterRecipes} addFilterRecipe={addFilterRecipe} updateFilterRecipe={updateFilterRecipe} removeFilterRecipe={removeFilterRecipe} />
+      )}
+    </div>
+  );
+}
+
+function DialInScreen({ coffees, dialIns, addDialIn }) {
   const coffee = coffees[0];
   const [dose, setDose] = useState(coffee.targetDose);
   const [yield_, setYield] = useState(coffee.targetYield);
@@ -932,7 +1676,7 @@ function CoffeeScreen({ coffees, dialIns, addDialIn }) {
   }
 
   return (
-    <div style={{ paddingTop: 14 }}>
+    <div>
       <Card>
         <SectionLabel>Today's coffee</SectionLabel>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600 }}>{coffee.name}</div>
@@ -1007,6 +1751,146 @@ function CoffeeScreen({ coffees, dialIns, addDialIn }) {
   );
 }
 
+function StaffRecipeCards({ recipes }) {
+  return (
+    <div>
+      {recipes.length === 0 ? (
+        <Card>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No recipes added yet — add one in Money → Recipes & COGS.</div>
+        </Card>
+      ) : (
+        recipes.map((r) => (
+          <Card key={r.id}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600 }}>{r.name}</div>
+            {r.cupSize && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{r.cupSize}</div>}
+            <div style={{ marginTop: 10 }}>
+              {r.ingredients.map((ing) => (
+                <div key={ing.id} style={{ fontSize: 13, color: 'var(--text-ivory)', padding: '4px 0', borderTop: '1px solid var(--border)' }}>
+                  {ing.name} — {ing.qtyUsed}
+                  {ing.qtyUnit}
+                </div>
+              ))}
+            </div>
+            {r.notes && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', lineHeight: 1.5 }}>
+                {r.notes}
+              </div>
+            )}
+          </Card>
+        ))
+      )}
+    </div>
+  );
+}
+
+const BREWER_TYPES = ['Batch brew', 'V60', 'Aeropress', 'Chemex', 'French press', 'Other'];
+
+function FilterRecipes({ filterRecipes, addFilterRecipe, updateFilterRecipe, removeFilterRecipe }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ coffee: '', brewer: 'V60', dose: '', water: '', temp: '', grindRef: '', bloom: '', totalTime: '', steps: '', notes: '' });
+
+  const inputStyle = {
+    width: '100%',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-ivory)',
+    borderRadius: 8,
+    padding: '8px 10px',
+    fontSize: 13,
+  };
+
+  function submit() {
+    if (!form.coffee.trim()) return;
+    addFilterRecipe({
+      ...form,
+      dose: parseFloat(form.dose) || 0,
+      water: parseFloat(form.water) || 0,
+      steps: form.steps.split('\n').map((s) => s.trim()).filter(Boolean),
+    });
+    setForm({ coffee: '', brewer: 'V60', dose: '', water: '', temp: '', grindRef: '', bloom: '', totalTime: '', steps: '', notes: '' });
+    setShowForm(false);
+  }
+
+  return (
+    <div>
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showForm ? 12 : 0 }}>
+          <SectionLabel>Filter recipes</SectionLabel>
+          <button onClick={() => setShowForm((v) => !v)} style={{ ...ghostButtonStyle, width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: 11 }}>
+            {showForm ? 'Cancel' : '+ Add'}
+          </button>
+        </div>
+        {showForm && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input placeholder="Coffee (e.g. Colombia El Faro)" value={form.coffee} onChange={(e) => setForm((f) => ({ ...f, coffee: e.target.value }))} style={inputStyle} />
+            <select value={form.brewer} onChange={(e) => setForm((f) => ({ ...f, brewer: e.target.value }))} style={inputStyle}>
+              {BREWER_TYPES.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+              <input type="number" step="0.1" placeholder="Dose (g)" value={form.dose} onChange={(e) => setForm((f) => ({ ...f, dose: e.target.value }))} style={inputStyle} />
+              <input type="number" step="1" placeholder="Water (g)" value={form.water} onChange={(e) => setForm((f) => ({ ...f, water: e.target.value }))} style={inputStyle} />
+              <input placeholder="Temp (°C)" value={form.temp} onChange={(e) => setForm((f) => ({ ...f, temp: e.target.value }))} style={inputStyle} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <input placeholder="Grind reference" value={form.grindRef} onChange={(e) => setForm((f) => ({ ...f, grindRef: e.target.value }))} style={inputStyle} />
+              <input placeholder="Bloom (e.g. 30g / 30s)" value={form.bloom} onChange={(e) => setForm((f) => ({ ...f, bloom: e.target.value }))} style={inputStyle} />
+            </div>
+            <input placeholder="Total brew time" value={form.totalTime} onChange={(e) => setForm((f) => ({ ...f, totalTime: e.target.value }))} style={inputStyle} />
+            <textarea
+              placeholder="Steps — one per line"
+              value={form.steps}
+              onChange={(e) => setForm((f) => ({ ...f, steps: e.target.value }))}
+              style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }}
+            />
+            <input placeholder="Notes (optional)" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} style={inputStyle} />
+            <button onClick={submit} style={{ ...ghostButtonStyle, background: 'var(--copper)', color: '#3C2E22', border: 'none', fontWeight: 500 }}>
+              Add filter recipe
+            </button>
+          </div>
+        )}
+      </Card>
+
+      {filterRecipes.map((r) => {
+        const ratio = r.dose > 0 ? Math.round((r.water / r.dose) * 10) / 10 : null;
+        return (
+          <Card key={r.id}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 18 }}>{r.coffee}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.brewer}</div>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
+              {r.dose}g : {r.water}g{ratio ? ` · 1:${ratio}` : ''} · {r.temp}°C
+              {r.bloom ? ` · bloom ${r.bloom}` : ''}
+              {r.totalTime ? ` · ${r.totalTime}` : ''}
+            </div>
+            {r.grindRef && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Grind: {r.grindRef}</div>}
+            {r.steps && r.steps.length > 0 && (
+              <ol style={{ margin: '10px 0 0', paddingLeft: 18 }}>
+                {r.steps.map((step, i) => (
+                  <li key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4, lineHeight: 1.5 }}>
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            )}
+            {r.notes && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>{r.notes}</div>}
+            <button
+              onClick={() => removeFilterRecipe(r.id)}
+              style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, padding: '6px 10px', borderRadius: 8, marginTop: 10 }}
+            >
+              Remove
+            </button>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 function LabeledInput({ label, value, onChange }) {
   return (
     <div>
@@ -1032,11 +1916,12 @@ function LabeledInput({ label, value, onChange }) {
 
 // ---------- STOCK ----------
 
-function StockScreen({ subTab, setSubTab, products, waste, orders, addProduct, updateProduct, removeProduct, setStockCount, logWaste, markOrdered }) {
+function StockScreen({ subTab, setSubTab, products, waste, orders, deliveries, addProduct, updateProduct, removeProduct, setStockCount, logWaste, markOrdered, receiveDelivery }) {
   const subTabs = [
     { id: 'live', label: 'Live' },
     { id: 'count', label: 'Count' },
     { id: 'orders', label: 'Orders' },
+    { id: 'deliveries', label: 'Deliveries' },
     { id: 'waste', label: 'Waste' },
     { id: 'products', label: 'Products' },
   ];
@@ -1064,6 +1949,7 @@ function StockScreen({ subTab, setSubTab, products, waste, orders, addProduct, u
       {subTab === 'live' && <LiveStock products={products} />}
       {subTab === 'count' && <StockCount products={products} setStockCount={setStockCount} />}
       {subTab === 'orders' && <Orders products={products} orders={orders} markOrdered={markOrdered} />}
+      {subTab === 'deliveries' && <Deliveries orders={orders} deliveries={deliveries} receiveDelivery={receiveDelivery} />}
       {subTab === 'waste' && <WasteLog products={products} waste={waste} logWaste={logWaste} />}
       {subTab === 'products' && (
         <Products products={products} addProduct={addProduct} updateProduct={updateProduct} removeProduct={removeProduct} />
@@ -1253,7 +2139,7 @@ function Orders({ products, orders, markOrdered }) {
                 Estimated value: €{Math.round(estValue * 100) / 100}
               </div>
               <button
-                onClick={() => markOrdered(supplier, items.map((p) => p.id))}
+                onClick={() => markOrdered(supplier, items.map((p) => ({ productId: p.id, name: p.name, unit: p.unit, qtyOrdered: Math.max(0, Math.round((p.par - p.current) * 10) / 10) })))}
                 style={{ ...ghostButtonStyle, background: 'var(--copper)', color: '#3C2E22', border: 'none', fontWeight: 500 }}
               >
                 Mark ordered
@@ -1267,12 +2153,157 @@ function Orders({ products, orders, markOrdered }) {
         <Card>
           <SectionLabel>Recent orders</SectionLabel>
           {orders.slice(0, 8).map((o) => (
-            <div key={o.id} style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '6px 0', borderTop: '1px solid var(--border)' }}>
-              {fmtTime(o.timestamp)} — {o.supplier} ({o.itemIds.length} item{o.itemIds.length === 1 ? '' : 's'})
+            <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-secondary)', padding: '6px 0', borderTop: '1px solid var(--border)' }}>
+              <span>
+                {fmtTime(o.timestamp)} — {o.supplier} ({o.items.length} item{o.items.length === 1 ? '' : 's'})
+              </span>
+              <span style={{ color: o.status === 'received' ? 'var(--status-green)' : 'var(--copper)' }}>{o.status}</span>
             </div>
           ))}
         </Card>
       )}
+    </div>
+  );
+}
+
+function Deliveries({ orders, deliveries, receiveDelivery }) {
+  const pending = orders.filter((o) => o.status === 'ordered');
+  const [receivingId, setReceivingId] = useState(null);
+
+  return (
+    <div>
+      <Card>
+        <SectionLabel>Awaiting delivery</SectionLabel>
+        {pending.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Nothing outstanding.</div>
+        ) : (
+          pending.map((o) => (
+            <div key={o.id} style={{ padding: '10px 0', borderTop: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                <span>{o.supplier}</span>
+                <span style={{ color: 'var(--text-muted)' }}>{fmtTime(o.timestamp)}</span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
+                {o.items.map((i) => i.name).join(', ')}
+              </div>
+              <button
+                onClick={() => setReceivingId(receivingId === o.id ? null : o.id)}
+                style={{ ...ghostButtonStyle, width: 'auto', marginTop: 8, padding: '8px 14px', fontSize: 12 }}
+              >
+                {receivingId === o.id ? 'Cancel' : 'Receive delivery'}
+              </button>
+              {receivingId === o.id && (
+                <ReceiveForm
+                  order={o}
+                  onSubmit={(receivedItems, tempC, notes) => {
+                    receiveDelivery(o.id, receivedItems, tempC, notes);
+                    setReceivingId(null);
+                  }}
+                />
+              )}
+            </div>
+          ))
+        )}
+      </Card>
+
+      {deliveries.length > 0 && (
+        <Card>
+          <SectionLabel>Delivery history</SectionLabel>
+          {deliveries.slice(0, 8).map((d) => {
+            const hasIssue = d.items.some((i) => i.missing || i.damaged || i.qtyReceived !== i.qtyOrdered);
+            return (
+              <div key={d.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span>{d.supplier}</span>
+                  <span style={{ color: hasIssue ? 'var(--copper)' : 'var(--status-green)' }}>{hasIssue ? '⚠ discrepancy' : '✓ as expected'}</span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                  {fmtTime(d.timestamp)}
+                  {d.tempC ? ` · ${d.tempC}°C on arrival` : ''}
+                </div>
+                {d.items.filter((i) => i.missing || i.damaged || i.qtyReceived !== i.qtyOrdered).map((i) => (
+                  <div key={i.productId} style={{ fontSize: 11, color: 'var(--copper)', marginTop: 2 }}>
+                    {i.name}: ordered {i.qtyOrdered}, received {i.qtyReceived}
+                    {i.missing ? ' · missing' : ''}
+                    {i.damaged ? ' · damaged' : ''}
+                  </div>
+                ))}
+                {d.notes && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{d.notes}</div>}
+              </div>
+            );
+          })}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function ReceiveForm({ order, onSubmit }) {
+  const [rows, setRows] = useState(order.items.map((i) => ({ ...i, qtyReceived: i.qtyOrdered, missing: false, damaged: false })));
+  const [tempC, setTempC] = useState('');
+  const [notes, setNotes] = useState('');
+
+  function updateRow(productId, patch) {
+    setRows((rs) => rs.map((r) => (r.productId === productId ? { ...r, ...patch } : r)));
+  }
+
+  const inputStyleSm = {
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-ivory)',
+    borderRadius: 6,
+    padding: '6px 8px',
+    fontSize: 12,
+    width: 60,
+  };
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+      {rows.map((r) => (
+        <div key={r.productId} style={{ marginBottom: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <span style={{ fontSize: 12 }}>{r.name}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>ordered {r.qtyOrdered} {r.unit}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type="number"
+              step="0.1"
+              value={r.qtyReceived}
+              onChange={(e) => updateRow(r.productId, { qtyReceived: parseFloat(e.target.value) || 0 })}
+              style={inputStyleSm}
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>
+              <input type="checkbox" checked={r.missing} onChange={(e) => updateRow(r.productId, { missing: e.target.checked })} /> Missing
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>
+              <input type="checkbox" checked={r.damaged} onChange={(e) => updateRow(r.productId, { damaged: e.target.checked })} /> Damaged
+            </label>
+          </div>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <input
+          type="number"
+          step="0.1"
+          placeholder="Delivery temp °C (if applicable)"
+          value={tempC}
+          onChange={(e) => setTempC(e.target.value)}
+          style={{ ...inputStyleSm, width: '100%', flex: 1 }}
+        />
+      </div>
+      <input
+        placeholder="Notes (price discrepancy, etc.)"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        style={{ ...inputStyleSm, width: '100%', marginBottom: 8 }}
+      />
+      <button
+        onClick={() => onSubmit(rows, tempC, notes)}
+        style={{ ...ghostButtonStyle, background: 'var(--copper)', color: '#3C2E22', border: 'none', fontWeight: 500, width: '100%' }}
+      >
+        Confirm receipt — updates stock
+      </button>
     </div>
   );
 }
@@ -1469,12 +2500,27 @@ function Products({ products, addProduct, updateProduct, removeProduct }) {
                 {p.category} · {p.supplier || 'no supplier'} · par {p.par} {p.unit}
               </div>
             </div>
-            <button
-              onClick={() => removeProduct(p.id)}
-              style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, padding: '6px 10px', borderRadius: 8 }}
-            >
-              Remove
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>€</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  defaultValue={p.cost}
+                  onBlur={(e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val) && val !== p.cost) updateProduct(p.id, { cost: val });
+                  }}
+                  style={{ ...inputStyle, width: 70, padding: '5px 6px' }}
+                />
+              </div>
+              <button
+                onClick={() => removeProduct(p.id)}
+                style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, padding: '6px 10px', borderRadius: 8 }}
+              >
+                Remove
+              </button>
+            </div>
           </div>
         </Card>
       ))}
@@ -1493,7 +2539,7 @@ function recipeCost(recipe) {
   return Math.round(recipe.ingredients.reduce((sum, ing) => sum + ingredientCost(ing), 0) * 100) / 100;
 }
 
-function MoneyScreen({ subTab, setSubTab, recipes, addRecipe, updateRecipe, removeRecipe, dailyCloses, saveDailyClose, todaysWasteCost, dateKey }) {
+function MoneyScreen({ subTab, setSubTab, recipes, addRecipe, updateRecipe, removeRecipe, dailyCloses, saveDailyClose, todaysWasteCost, dateKey, priceAlerts, dismissPriceAlert, applyPriceAlertToIngredient }) {
   const subTabs = [
     { id: 'close', label: 'Daily Close' },
     { id: 'recipes', label: 'Recipes & COGS' },
@@ -1522,7 +2568,17 @@ function MoneyScreen({ subTab, setSubTab, recipes, addRecipe, updateRecipe, remo
       {subTab === 'close' && (
         <DailyClose dailyCloses={dailyCloses} saveDailyClose={saveDailyClose} todaysWasteCost={todaysWasteCost} recipes={recipes} dateKey={dateKey} />
       )}
-      {subTab === 'recipes' && <Recipes recipes={recipes} addRecipe={addRecipe} updateRecipe={updateRecipe} removeRecipe={removeRecipe} />}
+      {subTab === 'recipes' && (
+        <Recipes
+          recipes={recipes}
+          addRecipe={addRecipe}
+          updateRecipe={updateRecipe}
+          removeRecipe={removeRecipe}
+          priceAlerts={priceAlerts}
+          dismissPriceAlert={dismissPriceAlert}
+          applyPriceAlertToIngredient={applyPriceAlertToIngredient}
+        />
+      )}
     </div>
   );
 }
@@ -1700,14 +2756,14 @@ function DailyClose({ dailyCloses, saveDailyClose, todaysWasteCost, recipes, dat
   );
 }
 
-function Recipes({ recipes, addRecipe, updateRecipe, removeRecipe }) {
+function Recipes({ recipes, addRecipe, updateRecipe, removeRecipe, priceAlerts, dismissPriceAlert, applyPriceAlertToIngredient }) {
   const [expandedId, setExpandedId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', cupSize: '', sellingPrice: '' });
 
   function submit() {
     if (!form.name.trim()) return;
-    addRecipe({ name: form.name, cupSize: form.cupSize, sellingPrice: parseFloat(form.sellingPrice) || 0, ingredients: [] });
+    addRecipe({ name: form.name, cupSize: form.cupSize, sellingPrice: parseFloat(form.sellingPrice) || 0, ingredients: [], notes: '' });
     setForm({ name: '', cupSize: '', sellingPrice: '' });
     setShowForm(false);
   }
@@ -1722,8 +2778,58 @@ function Recipes({ recipes, addRecipe, updateRecipe, removeRecipe }) {
     fontSize: 13,
   };
 
+  const activeAlerts = (priceAlerts || []).filter((a) => !a.dismissed);
+
   return (
     <div>
+      {activeAlerts.length > 0 && (
+        <Card style={{ borderColor: 'var(--copper)' }}>
+          <SectionLabel>Price changes</SectionLabel>
+          {activeAlerts.map((alert) => {
+            const affected = recipes
+              .map((r) => ({
+                recipe: r,
+                ingredient: r.ingredients.find((ing) => ing.name.toLowerCase().includes(alert.productName.toLowerCase()) || alert.productName.toLowerCase().includes(ing.name.toLowerCase())),
+              }))
+              .filter((x) => x.ingredient);
+            return (
+              <div key={alert.id} style={{ padding: '10px 0', borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 13, color: 'var(--copper)', marginBottom: 6 }}>
+                  {alert.productName}: €{alert.oldCost} → €{alert.newCost} ({alert.pctChange >= 0 ? '+' : ''}
+                  {alert.pctChange}%)
+                </div>
+                {affected.length === 0 ? (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>No recipes reference this ingredient by name.</div>
+                ) : (
+                  affected.map(({ recipe, ingredient }) => {
+                    const newIngCost = Math.round(ingredientCost(ingredient) * (1 + alert.pctChange / 100) * 100) / 100;
+                    const currentCost = recipeCost(recipe);
+                    const estNewCost = Math.round((currentCost - ingredientCost(ingredient) + newIngCost) * 100) / 100;
+                    const estNewMarginPct = recipe.sellingPrice > 0 ? Math.round(((recipe.sellingPrice - estNewCost) / recipe.sellingPrice) * 1000) / 10 : null;
+                    return (
+                      <div key={recipe.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: 'var(--text-secondary)', padding: '4px 0' }}>
+                        <span>
+                          {recipe.name} — est. margin {estNewMarginPct !== null ? `${estNewMarginPct}%` : '—'}
+                        </span>
+                        <button
+                          onClick={() => applyPriceAlertToIngredient(alert.id, recipe.id, ingredient.id, alert.pctChange)}
+                          style={{ ...ghostButtonStyle, width: 'auto', marginTop: 0, padding: '5px 10px', fontSize: 10 }}
+                        >
+                          Apply to recipe
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+                <button onClick={() => dismissPriceAlert(alert.id)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 11, marginTop: 6 }}>
+                  Dismiss
+                </button>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
       <Card>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showForm ? 12 : 0 }}>
           <SectionLabel>Drink recipes</SectionLabel>
@@ -1787,6 +2893,15 @@ function Recipes({ recipes, addRecipe, updateRecipe, removeRecipe }) {
                   <span style={{ color: 'var(--status-green)' }}>€{margin}</span>
                 </div>
                 <AddIngredient recipeId={r.id} updateRecipe={updateRecipe} ingredients={r.ingredients} />
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>Staff-facing notes (texture, serve temp, etc.)</div>
+                  <textarea
+                    defaultValue={r.notes || ''}
+                    onBlur={(e) => updateRecipe(r.id, { notes: e.target.value })}
+                    placeholder="e.g. Fine microfoam, serve 65°C max"
+                    style={{ ...inputStyle, minHeight: 50, resize: 'vertical' }}
+                  />
+                </div>
                 <button
                   onClick={() => removeRecipe(r.id)}
                   style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 11, padding: '6px 10px', borderRadius: 8, marginTop: 10 }}
